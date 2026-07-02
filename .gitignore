@@ -3,3 +3,4 @@
 ./yolo26n.pt
 ./test
 ./.venv
+./models
