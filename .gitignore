@@ -1,0 +1,5 @@
+./tracker.yaml
+./yolo26n-pose.pt
+./yolo26n.pt
+./test
+./.venv
