@@ -1,145 +1,110 @@
+"""
+Реалтайм-тест TimeSformer (предобучен на Kinetics-400) через веб-камеру.
+
+Установка зависимостей:
+    pip install transformers torch torchvision opencv-python pillow --break-system-packages
+
+Запуск:
+    python realtime_timesformer.py
+
+Нажми 'q' чтобы выйти.
+"""
+
 import cv2
-import numpy as np
 import torch
-from ultralytics import YOLO
-from deep_sort_realtime.deepsort_tracker import DeepSort
+import numpy as np
+from collections import deque
+from transformers import AutoImageProcessor, TimesformerForVideoClassification
+
+# -------------------------------
+# Настройки
+# -------------------------------
+MODEL_NAME = "facebook/timesformer-base-finetuned-k400"
+NUM_FRAMES = 8          # TimeSformer base ожидает окно из 8 кадров
+INFER_EVERY_N = 5       # запускать инференс каждые N новых кадров (для скорости)
+TOP_K = 3               # сколько топ-предсказаний показывать
+
+# -------------------------------
+# Загрузка модели
+# -------------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Используется устройство: {device}")
+
+print("Загрузка модели (может занять время при первом запуске)...")
+processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+model = TimesformerForVideoClassification.from_pretrained(MODEL_NAME).to(device)
+model.eval()
+
+id2label = model.config.id2label
+print(f"Модель загружена. Всего классов: {len(id2label)}")
+
+# -------------------------------
+# Буфер кадров (скользящее окно)
+# -------------------------------
+frame_buffer = deque(maxlen=NUM_FRAMES)
+frame_counter = 0
+last_predictions = []  # список (label, prob) для отображения между инференсами
 
 
-YOLO_MODEL_PATH = "yolo26n.pt"
-OSNET_MODEL_PATH = "models/osnet_x1_0.pt"
-CONFIDENCE_THRESHOLD = 0.5
-OSNET_INPUT_SIZE = (128, 256)
-# CAMERA_ID = "./test/test-video.mp4"
-CAMERA_ID = 0
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+def predict(frames_rgb_list):
+    """Принимает список из NUM_FRAMES кадров в формате RGB (numpy), возвращает топ предсказания."""
+    inputs = processor(images=frames_rgb_list, return_tensors="pt")
+    pixel_values = inputs["pixel_values"].to(device)  # shape: (1, T, C, H, W)
+
+    with torch.no_grad():
+        outputs = model(pixel_values=pixel_values)
+        logits = outputs.logits[0]
+        probs = torch.softmax(logits, dim=-1)
+
+    top_probs, top_idxs = torch.topk(probs, TOP_K)
+    results = [(id2label[idx.item()], prob.item()) for prob, idx in zip(top_probs, top_idxs)]
+    return results
 
 
-MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+# -------------------------------
+# Основной цикл с веб-камерой
+# -------------------------------
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    raise RuntimeError("Не удалось открыть камеру. Проверь, что она подключена и доступна.")
 
+print("Запуск. Нажми 'q' в окне видео, чтобы выйти.")
 
-class PersonDetector:
-    def __init__(self, model_path: str = YOLO_MODEL_PATH):
-        self.model = YOLO(model_path)
+while True:
+    ret, frame_bgr = cap.read()
+    if not ret:
+        print("Не удалось получить кадр с камеры.")
+        break
 
-    def detect(self, frame: np.ndarray) -> list:
-        results = self.model.predict(frame, classes=[0], verbose=False)
-        detections = []
-        if results[0].boxes is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            confs = results[0].boxes.conf.cpu().numpy()
-            for box, conf in zip(boxes, confs):
-                if conf < CONFIDENCE_THRESHOLD:
-                    continue
-                x1, y1, x2, y2 = box
-                w = x2 - x1
-                h = y2 - y1
-                detections.append(([x1, y1, w, h], conf, "person"))
-        return detections
+    # Конвертируем BGR (OpenCV) -> RGB (нужно для модели)
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    frame_buffer.append(frame_rgb)
+    frame_counter += 1
 
+    # Запускаем инференс, когда буфер заполнен и прошло INFER_EVERY_N новых кадров
+    if len(frame_buffer) == NUM_FRAMES and frame_counter % INFER_EVERY_N == 0:
+        try:
+            last_predictions = predict(list(frame_buffer))
+        except Exception as e:
+            print(f"Ошибка инференса: {e}")
 
-class OSNetFeatureExtractor:
-    def __init__(self, model_path: str = OSNET_MODEL_PATH):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = torch.load(model_path, map_location=self.device, weights_only=False)
-        self.model.eval()
+    # Отрисовка предсказаний на кадре
+    display_frame = frame_bgr.copy()
+    y_offset = 30
+    if last_predictions:
+        for label, prob in last_predictions:
+            text = f"{label}: {prob*100:.1f}%"
+            cv2.putText(display_frame, text, (10, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            y_offset += 30
+    else:
+        cv2.putText(display_frame, "Buffering...", (10, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
-    def preprocess(self, crop: np.ndarray) -> np.ndarray:
-        h, w = crop.shape[:2]
-        if h <= 0 or w <= 0:
-            return np.zeros((3, OSNET_INPUT_SIZE[1], OSNET_INPUT_SIZE[0]), dtype=np.float32)
-        img = cv2.resize(crop, OSNET_INPUT_SIZE)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.0
-        img = (img - MEAN) / STD
-        img = img.transpose(2, 0, 1)
-        return img
+    cv2.imshow("TimeSformer Realtime Action Recognition (q - exit)", display_frame)
 
-    def extract(self, crops: list[np.ndarray]) -> list:
-        if not crops:
-            return []
-        batch = np.stack([self.preprocess(c) for c in crops])
-        batch_tensor = torch.from_numpy(batch).to(self.device)
-        with torch.no_grad():
-            features = self.model(batch_tensor).cpu().numpy()
-        norms = np.linalg.norm(features, axis=1, keepdims=True)
-        features = features / np.maximum(norms, 1e-12)
-        return features.tolist()
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
-
-class PersonReIDApp:
-    def __init__(self):
-        self.detector = PersonDetector()
-        self.extractor = OSNetFeatureExtractor()
-        self.tracker = DeepSort(
-            max_age=120,
-            n_init=3,
-            nn_budget=100,
-            embedder=None,
-            max_cosine_distance=0.3,
-        )
-        self.cap = cv2.VideoCapture(CAMERA_ID)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-    def crop_person(self, frame: np.ndarray, bbox_ltwh: list) -> np.ndarray:
-        x, y, w, h = [int(v) for v in bbox_ltwh]
-        x = max(0, x)
-        y = max(0, y)
-        return frame[y : y + h, x : x + w]
-
-    def run(self):
-        if not self.cap.isOpened():
-            print("Camera not available")
-            return
-
-        cv2.namedWindow("Person Re-ID (OSNet)", cv2.WINDOW_NORMAL)
-
-        while True:
-            success, frame = self.cap.read()
-            if not success:
-                break
-
-            detections = self.detector.detect(frame)
-
-            embeds = []
-            valid_detections = []
-            for det in detections:
-                bbox_ltwh = det[0]
-                if bbox_ltwh[2] <= 0 or bbox_ltwh[3] <= 0:
-                    continue
-                crop = self.crop_person(frame, bbox_ltwh)
-                embeds.append(crop)
-                valid_detections.append(det)
-
-            features = self.extractor.extract(embeds)
-
-            tracks = self.tracker.update_tracks(valid_detections, embeds=features, frame=frame)
-
-            for track in tracks:
-                if not track.is_confirmed():
-                    continue
-                track_id = track.track_id
-                ltrb = track.to_ltrb()
-                x1, y1, x2, y2 = [int(v) for v in ltrb]
-
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-
-                id_text = f"ID {track_id}"
-                (tw, th), _ = cv2.getTextSize(id_text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 2)
-                cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 8, y1), (0, 255, 255), -1)
-                cv2.putText(frame, id_text, (x1 + 4, y1 - 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
-
-            cv2.imshow("Person Re-ID (OSNet)", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-        self.cap.release()
-        cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    app = PersonReIDApp()
-    app.run()
+cap.release()
+cv2.destroyAllWindows()
