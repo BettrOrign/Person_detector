@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v4 — Face ID + Gemini</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; min-height: 100vh; display: flex; flex-direction: column; }
+  header { background: #1a1a1a; border-bottom: 1px solid #333; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-shrink: 0; }
+  header h1 { font-size: 1rem; font-weight: 500; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .status { font-size: 0.8rem; color: #888; }
+  .status.connected { color: #4ade80; }
+  .fps { font-size: 0.8rem; color: #38bdf8; font-variant-numeric: tabular-nums; }
+  .mem-btn { background: #2563eb; color: #fff; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
+  .mem-btn:hover { background: #1d4ed8; }
+  main { flex: 1; display: flex; gap: 0; overflow: hidden; }
+  .video-panel { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+  canvas { display: block; width: 100%; height: auto; max-height: 100%; background: #000; }
+  .side-panel { width: 320px; background: #1a1a1a; border-left: 1px solid #333; overflow-y: auto; padding: 12px; flex-shrink: 0; }
+  .side-panel h2 { font-size: 0.85rem; font-weight: 500; margin-bottom: 10px; color: #aaa; }
+  .person-card { background: #222; border-radius: 6px; padding: 8px; margin-bottom: 6px; border-left: 3px solid #4ade80; }
+  .person-card.unknown { border-left-color: #ffbf00; }
+  .person-name { font-weight: 600; color: #4ade80; font-size: 0.85rem; }
+  .person-name.unknown { color: #ffbf00; }
+  .person-action { font-size: 0.8rem; color: #ccc; margin-top: 2px; }
+  .person-meta { font-size: 0.7rem; color: #888; margin-top: 1px; }
+  .person-enroll { background: #2563eb; color: #fff; border: none; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; margin-top: 4px; }
+  .person-enroll:hover { background: #1d4ed8; }
+  .no-people { color: #666; font-style: italic; font-size: 0.8rem; padding: 20px; }
+  .gallery-count { color: #4ade80; font-weight: 600; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 10; }
+  .overlay.open { display: flex; }
+  .mem-panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; width: min(900px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+  .mem-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #333; }
+  .mem-head h2 { margin: 0; color: #eee; font-size: 1rem; }
+  .mem-close { background: #333; color: #eee; border: none; width: 30px; height: 30px; border-radius: 5px; cursor: pointer; font-size: 1.2rem; }
+  .mem-close:hover { background: #444; }
+  .mem-body { padding: 14px 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .mem-card { background: #222; border-radius: 8px; overflow: hidden; border: 1px solid #333; }
+  .mem-card img { width: 100%; height: 160px; object-fit: cover; background: #000; display: block; }
+  .mem-card .ph { width: 100%; height: 160px; background: #2a2a2a; display: flex; align-items: center; justify-content: center; color: #666; font-size: 0.75rem; }
+  .mem-info { padding: 8px 10px; }
+  .mem-name { font-weight: 600; color: #4ade80; font-size: 0.85rem; }
+  .mem-desc { font-size: 0.7rem; color: #888; margin: 2px 0 8px; }
+  .mem-del { width: 100%; background: #b91c1c; color: #fff; border: none; padding: 5px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .mem-del:hover { background: #991b1b; }
+  .mem-empty { color: #666; font-style: italic; padding: 20px; text-align: center; }
+  @media (max-width: 700px) { .side-panel { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>v4 — Face ID + Gemini</h1>
+  <div class="header-right">
+    <span class="fps" id="fps">FPS: --</span>
+    <span class="status" id="status">Connecting...</span>
+    <button class="mem-btn" id="memBtn">Gallery</button>
+  </div>
+</header>
+<main>
+  <div class="video-panel">
+    <canvas id="canvas"></canvas>
+  </div>
+  <aside class="side-panel" id="sidePanel">
+    <h2>Known: <span class="gallery-count" id="gallery">0</span></h2>
+    <div id="people"></div>
+  </aside>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="mem-panel">
+    <div class="mem-head">
+      <h2>Gallery</h2>
+      <button class="mem-close" id="memClose">&times;</button>
+    </div>
+    <div class="mem-body" id="memBody"></div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const peopleEl = document.getElementById('people');
+const galleryEl = document.getElementById('gallery');
+const fpsEl = document.getElementById('fps');
+const overlay = document.getElementById('overlay');
+const memBody = document.getElementById('memBody');
+
+let ws = null;
+let frameImg = new Image();
+let lastPeople = [];
+
+function connect() {
+  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.onopen = () => { statusEl.textContent = 'Connected'; statusEl.classList.add('connected'); };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'frame') {
+      frameImg.src = 'data:image/jpeg;base64,' + msg.image;
+      lastPeople = msg.people || [];
+      galleryEl.textContent = msg.gallery || 0;
+      if (typeof msg.fps === 'number') fpsEl.textContent = 'FPS: ' + msg.fps.toFixed(1);
+      renderPeople(lastPeople);
+    }
+  };
+  ws.onclose = () => {
+    statusEl.textContent = 'Disconnected — reconnecting...';
+    statusEl.classList.remove('connected');
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = (e) => console.error('WS error', e);
+}
+
+async function enrollPerson(personId) {
+  const name = prompt('Enter name for this person:');
+  if (!name) return;
+  const url = '/enroll?person_id=' + personId + '&name=' + encodeURIComponent(name);
+  const res = await fetch(url, { method: 'POST' });
+  if (res.ok) {
+    console.log('Enrolled person', personId, 'as', name);
+    const data = await res.json();
+    alert('Enrolled as gallery #' + data.pid);
+  } else {
+    alert('Failed: ' + await res.text());
+  }
+}
+
+function renderPeople(people) {
+  if (!people || people.length === 0) {
+    peopleEl.innerHTML = '<div class="no-people">No people</div>';
+    return;
+  }
+  const html = people.map(p => {
+    const known = p.known;
+    const cls = known ? 'person-card' : 'person-card unknown';
+    const nameCls = known ? 'person-name' : 'person-name unknown';
+    const enrollBtn = known ? '' : `<button class="person-enroll" data-id="${p.id}">Enroll</button>`;
+    return `
+      <div class="${cls}">
+        <div class="${nameCls}">${p.name}</div>
+        <div class="person-action">${p.action || '...'}</div>
+        <div class="person-meta">track #${p.id}</div>
+        ${enrollBtn ? '<div>' + enrollBtn + '</div>' : ''}
+      </div>`;
+  }).join('');
+  peopleEl.innerHTML = html;
+  peopleEl.querySelectorAll('.person-enroll').forEach(b => {
+    b.addEventListener('click', () => enrollPerson(parseInt(b.getAttribute('data-id'))));
+  });
+}
+
+function draw() {
+  if (frameImg.complete && frameImg.naturalWidth > 0) {
+    if (canvas.width !== frameImg.naturalWidth || canvas.height !== frameImg.naturalHeight) {
+      canvas.width = frameImg.naturalWidth;
+      canvas.height = frameImg.naturalHeight;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(frameImg, 0, 0);
+    lastPeople.forEach(p => {
+      const [x1, y1, x2, y2] = p.bbox;
+      const known = p.known;
+      ctx.strokeStyle = known ? '#4ade80' : '#ffbf00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      const text = p.name + (p.action ? ' | ' + p.action : '');
+      ctx.font = 'bold 13px system-ui';
+      ctx.fillStyle = known ? '#4ade80' : '#ffbf00';
+      ctx.fillText(text, x1 + 4, y1 + 14);
+    });
+  }
+  requestAnimationFrame(draw);
+}
+
+async function loadGallery() {
+  const res = await fetch('/gallery');
+  const persons = await res.json();
+  if (!persons.length) {
+    memBody.innerHTML = '<div class="mem-empty">Gallery is empty.</div>';
+    return;
+  }
+  memBody.innerHTML = persons.map(p => {
+    const img = p.has_image
+      ? `<img src="/gallery/${p.id}/image" alt="${p.name}">`
+      : `<div class="ph">no photo</div>`;
+    return `
+      <div class="mem-card">
+        ${img}
+        <div class="mem-info">
+          <div class="mem-name">${p.name}</div>
+          <div class="mem-desc">${p.desc || 'id=' + p.id}</div>
+          <button class="mem-del" data-id="${p.id}" data-name="${p.name}">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+  memBody.querySelectorAll('.mem-del').forEach(b => {
+    b.addEventListener('click', async () => {
+      const id = b.getAttribute('data-id');
+      const name = b.getAttribute('data-name');
+      if (!confirm('Delete "' + name + '" from gallery?')) return;
+      await fetch('/gallery/' + id, { method: 'DELETE' });
+      loadGallery();
+    });
+  });
+}
+
+document.getElementById('memBtn').addEventListener('click', () => {
+  overlay.classList.add('open');
+  loadGallery();
+});
+document.getElementById('memClose').addEventListener('click', () => overlay.classList.remove('open'));
+overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
+
+document.addEventListener('DOMContentLoaded', () => { connect(); draw(); });
+</script>
+</body>
+</html>
