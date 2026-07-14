@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Person Detector v2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; min-height: 100vh; }
+  header { background: #1a1a1a; border-bottom: 1px solid #333; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.1rem; font-weight: 500; }
+  .status { font-size: 0.8rem; color: #888; }
+  .status.connected { color: #4ade80; }
+  main { display: grid; grid-template-columns: 1fr 320px; gap: 20px; padding: 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .video-panel { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+  canvas { display: block; width: 100%; height: auto; background: #000; }
+  .overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .side-panel { background: #1a1a1a; border-radius: 8px; padding: 16px; overflow-y: auto; max-height: calc(100vh - 120px); }
+  h2 { font-size: 0.9rem; font-weight: 500; margin-bottom: 12px; color: #aaa; }
+  .person-card { background: #222; border-radius: 6px; padding: 10px; margin-bottom: 8px; border-left: 3px solid #4ade80; }
+  .person-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .person-id { font-weight: 600; color: #4ade80; font-size: 0.85rem; }
+  .person-desc { font-size: 0.8rem; color: #ccc; line-height: 1.4; }
+  .person-empty { color: #666; font-style: italic; font-size: 0.8rem; }
+  .info-row { display: flex; justify-content: space-between; font-size: 0.75rem; color: #666; margin-bottom: 4px; }
+  .no-people { color: #666; font-style: italic; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Person Detector v2</h1>
+  <div class="status" id="status">Connecting...</div>
+</header>
+<main>
+  <div class="video-panel">
+    <canvas id="canvas"></canvas>
+  </div>
+  <aside class="side-panel">
+    <h2>People</h2>
+    <div id="people"></div>
+  </aside>
+</main>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const peopleEl = document.getElementById('people');
+
+let ws = null;
+let frameImg = new Image();
+let lastPeople = [];
+
+function connect() {
+  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    statusEl.textContent = 'Connected';
+    statusEl.classList.add('connected');
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'frame') {
+      frameImg.src = 'data:image/jpeg;base64,' + msg.image;
+      lastPeople = msg.people || [];
+      renderPeople(lastPeople);
+    }
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = 'Disconnected - reconnecting...';
+    statusEl.classList.remove('connected');
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = (e) => {
+    console.error('WS error', e);
+  };
+}
+
+function renderPeople(people) {
+  if (!people || people.length === 0) {
+    document.getElementById('people').innerHTML = '<div class="no-people">No people detected</div>';
+    return;
+  }
+  const html = people.map(p => `
+    <div class="person-card">
+      <div class="person-header">
+        <span class="person-id">#${p.id}</span>
+      </div>
+      <div class="person-desc">${p.desc || '<span class="person-empty">describing...</span>'}</div>
+    </div>
+  `).join('');
+  document.getElementById('people').innerHTML = html;
+}
+
+function draw() {
+  if (frameImg.complete && frameImg.naturalWidth > 0) {
+    if (canvas.width !== frameImg.width || canvas.height !== frameImg.height) {
+      canvas.width = frameImg.width;
+      canvas.height = frameImg.height;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(frameImg, 0, 0);
+
+    // draw boxes + labels from last known people
+    const people = lastPeople;
+    people.forEach(p => {
+      const [x1, y1, x2, y2] = p.box;
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+      if (p.desc) {
+        ctx.font = '12px system-ui';
+        const text = p.desc;
+        const metrics = ctx.measureText(text);
+        const pad = 4;
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(x1, y1 - 22, metrics.width + 10, 22);
+        ctx.fillStyle = '#000';
+        ctx.fillText(text, x1 + 5, y1 - 8);
+      }
+
+      // ID label
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillStyle = '#4ade80';
+      ctx.fillText(`#${p.id}`, x1 + 4, y1 + 14);
+    });
+  }
+  requestAnimationFrame(draw);
+}
+
+frameImg.onload = () => {
+  if (canvas.width !== frameImg.width || canvas.height !== frameImg.height) {
+    canvas.width = frameImg.width;
+    canvas.height = frameImg.height;
+  }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  connect();
+  draw();
+});
+
+window.addEventListener('resize', () => {
+  // canvas resizes via CSS, internal resolution handled in draw()
+});
+</script>
+</body>
+</html>
