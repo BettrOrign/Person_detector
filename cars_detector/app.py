@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 
 import cv2
@@ -14,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 
 from pipeline import Pipeline
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -88,7 +91,16 @@ async def ws(websocket: WebSocket):
         pass
 
 
+def _is_image(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in IMAGE_EXTS
+
+
 def detection_loop(p: Pipeline):
+    if _is_image(p.source):
+        _process_image(p, p.source)
+        p.running = False
+        return
+
     cap = cv2.VideoCapture(p.source)
     if not cap.isOpened():
         logger.error(f"Cannot open source: {p.source}")
@@ -111,6 +123,46 @@ def detection_loop(p: Pipeline):
             time.sleep(remaining)
     cap.release()
     logger.info("Detection loop stopped")
+
+
+def _process_image(p: Pipeline, path: str):
+    frame = cv2.imread(path)
+    if frame is None:
+        logger.error(f"Cannot read image: {path}")
+        return
+    logger.info(f"Processing image: {path} ({frame.shape[1]}x{frame.shape[0]})")
+
+    p.process_frame(frame)
+
+    print("=" * 50)
+    print(f"Image: {path}")
+    if not p._latest_tracks:
+        print("No cars detected.")
+    for t in p._latest_tracks:
+        plate = t.plate_text or "(detecting...)"
+        print(f"  Car #{t.track_id}: bbox={t.bbox}, plate={plate}")
+        if t.plate_text:
+            x1, y1, x2, y2 = t.bbox
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = f"{t.plate_text}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 8, y1), (0, 255, 0), -1)
+            cv2.putText(frame, label, (x1 + 4, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    print(f"Gallery entries: {p.gallery.count()}")
+    print("=" * 50)
+
+    base, ext = os.path.splitext(path)
+    out_path = f"{base}_annotated{ext}"
+    cv2.imwrite(out_path, frame)
+    logger.info(f"Saved annotated: {out_path}")
+
+    try:
+        cv2.imshow("Cars Detector", frame)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    except cv2.error:
+        pass
 
 
 @app.on_event("startup")
@@ -138,11 +190,17 @@ def shutdown():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", default="0", help="Video source path or camera index")
+    parser.add_argument("--source", default="0", help="Video/camera source or image path")
     parser.add_argument("--gallery", default="gallery")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
+
+    if _is_image(args.source):
+        p = Pipeline(source=args.source, gallery_path=args.gallery)
+        _process_image(p, args.source)
+        p.gallery.close()
+        return
 
     os.environ.setdefault("CARSDETECTOR_SOURCE", args.source)
     os.environ.setdefault("CARSDETECTOR_GALLERY", args.gallery)
