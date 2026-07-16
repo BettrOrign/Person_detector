@@ -4,7 +4,6 @@ import base64
 import json
 import logging
 import os
-import re
 import sys
 import threading
 import time
@@ -12,7 +11,7 @@ import time
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
@@ -68,58 +67,7 @@ def gallery_delete(pid: int):
     return {"ok": True}
 
 
-RANGE_RE = re.compile(r"bytes=(\d+)-(\d*)")
-VIDEO_MIME = {
-    ".mp4": "video/mp4",
-    ".avi": "video/x-msvideo",
-    ".mov": "video/quicktime",
-    ".mkv": "video/x-matroska",
-    ".webm": "video/webm",
-    ".ts": "video/mp2t",
-    ".flv": "video/x-flv",
-}
 
-
-@app.get("/video")
-async def video_stream(request: Request):
-    if pipeline is None:
-        return JSONResponse({"error": "pipeline not ready"}, status_code=503)
-    path = pipeline.source
-    if not path or not os.path.isfile(path):
-        return JSONResponse({"error": "no video"}, status_code=404)
-
-    total = os.path.getsize(path)
-    mime = VIDEO_MIME.get(os.path.splitext(path)[1].lower(), "video/mp4")
-    range_header = request.headers.get("range", "")
-    m = RANGE_RE.match(range_header)
-    if m:
-        start = int(m.group(1))
-        end = int(m.group(2)) if m.group(2) else total - 1
-        length = end - start + 1
-        with open(path, "rb") as f:
-            f.seek(start)
-            body = f.read(length)
-        return Response(
-            body,
-            status_code=206,
-            headers={
-                "Content-Range": f"bytes {start}-{end}/{total}",
-                "Accept-Ranges": "bytes",
-                "Content-Type": mime,
-                "Content-Length": str(length),
-            },
-        )
-
-    with open(path, "rb") as f:
-        body = f.read()
-    return Response(
-        body,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Type": mime,
-            "Content-Length": str(total),
-        },
-    )
 
 
 @app.websocket("/ws")
