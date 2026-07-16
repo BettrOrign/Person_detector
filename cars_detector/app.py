@@ -142,7 +142,7 @@ def _process_image(p: Pipeline, path: str):
         print(f"Cars detected: {len(p._latest_tracks)}")
     for t in p._latest_tracks:
         plate = t.plate_text or "(not recognized)"
-        print(f"  Car #{t.track_id}: bbox={t.bbox}, plate={plate}")
+        print(f"  Car #{t.track_id}: bbox={t.bbox}, plate={plate}, conf={t.plate_conf}")
         x1, y1, x2, y2 = t.bbox
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         label = t.plate_text if t.plate_text else f"Car #{t.track_id}"

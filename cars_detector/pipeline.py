@@ -93,37 +93,45 @@ class Pipeline:
         for cid in fresh_ids:
             car = self.cars[cid]
             x1, y1, x2, y2 = car.bbox
-            car_crop = frame[y1:y2, x1:x2]
+            pad_x = int((x2 - x1) * 0.1)
+            pad_y = int((y2 - y1) * 0.15)
+            cx1 = max(0, x1 - pad_x)
+            cy1 = max(0, y1 - pad_y)
+            cx2 = min(w, x2 + pad_x)
+            cy2 = min(h, y2 + pad_y)
+            car_crop = frame[cy1:cy2, cx1:cx2]
             if car_crop.size == 0:
                 continue
 
             plates = self.plate_model(car_crop, imgsz=640, conf=PLATE_CONF, verbose=False)
             ndet = len(plates[0].boxes) if (plates and plates[0].boxes is not None) else 0
-            if ndet > 0:
-                for pbox in plates[0].boxes:
-                    px1, py1, px2, py2 = map(int, pbox.xyxy[0])
-                    px1 = max(0, x1 + px1 - 4)
-                    py1 = max(0, y1 + py1 - 4)
-                    px2 = min(w, x1 + px2 + 4)
-                    py2 = min(h, y1 + py2 + 4)
-                    plate_crop = frame[py1:py2, px1:px2]
-                    if plate_crop.size == 0:
-                        continue
-                    try:
-                        text = self._ocr(plate_crop)
-                        if len(text) >= 3:
-                            if text != car.plate_text:
-                                car.plate_text = text
-                                car.plate_conf = float(pbox.conf[0])
-                                car.gallery_id = self.gallery.get_or_create(
-                                    text,
-                                    cv2.imencode(".jpg", plate_crop,
-                                                  [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes(),
-                                )
-                                logger.info(f"Car {cid} plate: {text}")
-                            break
-                    except Exception as e:
-                        logger.warning(f"OCR error for car {cid}: {e}")
+            if ndet == 0:
+                logger.debug(f"Car {cid}: no plate detected in crop ({car_crop.shape})")
+            for pbox in (plates[0].boxes if ndet > 0 else []):
+                px1, py1, px2, py2 = map(int, pbox.xyxy[0])
+                gx1 = max(0, cx1 + px1 - 4)
+                gy1 = max(0, cy1 + py1 - 4)
+                gx2 = min(w, cx1 + px2 + 4)
+                gy2 = min(h, cy1 + py2 + 4)
+                plate_crop = frame[gy1:gy2, gx1:gx2]
+                if plate_crop.size == 0:
+                    continue
+                try:
+                    text = self._ocr(plate_crop)
+                    logger.debug(f"Car {cid} OCR raw: '{text}'")
+                    if len(text) >= 3:
+                        if text != car.plate_text:
+                            car.plate_text = text
+                            car.plate_conf = float(pbox.conf[0])
+                            car.gallery_id = self.gallery.get_or_create(
+                                text,
+                                cv2.imencode(".jpg", plate_crop,
+                                              [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes(),
+                            )
+                            logger.info(f"Car {cid} plate: {text}")
+                        break
+                except Exception as e:
+                    logger.warning(f"OCR error for car {cid}: {e}")
 
         dead = [cid for cid, c in self.cars.items()
                 if cid not in fresh_ids and now - c.last_seen > 3.0]
