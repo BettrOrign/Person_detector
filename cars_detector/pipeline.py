@@ -129,7 +129,8 @@ class Pipeline:
                 if len(text) >= 3:
                     car.plate_text = text
                     car.plate_conf = float(pbox.conf[0])
-                    self.gallery.get_or_create(text, frame, gy1, gy2, gx1, gx2)
+                    _, img_bytes = cv2.imencode(".jpg", plate_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    self.gallery.get_or_create(text, img_bytes.tobytes())
 
         ids_to_remove = {cid for cid in self.cars if cid not in fresh_ids}
         for cid in ids_to_remove:
