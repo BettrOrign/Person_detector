@@ -17,8 +17,8 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 PLATE_MODEL_PATH = os.path.join(MODEL_DIR, "plate_detector.pt")
 CAR_CLASSES = {2, 5, 7}
 YOLO_IMGSZ = 640
-YOLO_CONF = 0.35
-PLATE_CONF = 0.4
+YOLO_CONF = 0.25
+PLATE_CONF = 0.25
 OCR_MAX_SIZE = 320
 
 
@@ -98,7 +98,8 @@ class Pipeline:
                 continue
 
             plates = self.plate_model(car_crop, imgsz=640, conf=PLATE_CONF, verbose=False)
-            if plates and plates[0].boxes is not None and len(plates[0].boxes) > 0:
+            ndet = len(plates[0].boxes) if (plates and plates[0].boxes is not None) else 0
+            if ndet > 0:
                 for pbox in plates[0].boxes:
                     px1, py1, px2, py2 = map(int, pbox.xyxy[0])
                     px1 = max(0, x1 + px1 - 4)

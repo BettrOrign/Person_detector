@@ -138,17 +138,19 @@ def _process_image(p: Pipeline, path: str):
     print(f"Image: {path}")
     if not p._latest_tracks:
         print("No cars detected.")
+    else:
+        print(f"Cars detected: {len(p._latest_tracks)}")
     for t in p._latest_tracks:
-        plate = t.plate_text or "(detecting...)"
+        plate = t.plate_text or "(not recognized)"
         print(f"  Car #{t.track_id}: bbox={t.bbox}, plate={plate}")
-        if t.plate_text:
-            x1, y1, x2, y2 = t.bbox
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            label = f"{t.plate_text}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 8, y1), (0, 255, 0), -1)
-            cv2.putText(frame, label, (x1 + 4, y1 - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        x1, y1, x2, y2 = t.bbox
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        label = t.plate_text if t.plate_text else f"Car #{t.track_id}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        bg_y1 = max(0, y1 - th - 8)
+        cv2.rectangle(frame, (x1, bg_y1), (x1 + tw + 8, y1), (0, 255, 0), -1)
+        cv2.putText(frame, label, (x1 + 4, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
     print(f"Gallery entries: {p.gallery.count()}")
     print("=" * 50)
 
