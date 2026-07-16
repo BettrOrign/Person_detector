@@ -45,16 +45,18 @@ const gallerySection = document.getElementById('gallery-section');
 const statsDiv = document.getElementById('stats');
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
-let cars = [];
+let detections = [];
+const MAX_DETECTIONS = 60;
 
 ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
-  cars = msg.cars || [];
-  statsDiv.textContent = `Cars: ${cars.length} | Gallery: ${msg.gallery_count || 0}`;
-  renderCars();
+  detections.push({ ts: msg.ts || 0, cars: msg.cars || [] });
+  if (detections.length > MAX_DETECTIONS) detections.shift();
+  statsDiv.textContent = `Cars: ${(msg.cars || []).length} | Gallery: ${msg.gallery_count || 0}`;
+  renderCars(msg.cars || []);
 };
 
-function renderCars() {
+function renderCars(cars) {
   carsList.innerHTML = cars.map(c => {
     const plateClass = c.plate ? '' : 'empty';
     const plateText = c.plate || 'detecting...';
@@ -90,14 +92,32 @@ function drawOverlay() {
   const sy = canvas.height / video.videoHeight;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '14px system-ui, sans-serif';
+
+  const vt = video.currentTime;
+  let best = null, bestDiff = 999;
+  for (const d of detections) {
+    const diff = Math.abs(d.ts - vt);
+    if (diff < bestDiff) { bestDiff = diff; best = d; }
+  }
+  const cars = (best && bestDiff < 1.0) ? best.cars : [];
+
   for (const c of cars) {
     const [x1,y1,x2,y2] = c.bbox;
+    const lx = x1*sx, ly = y1*sy, lw = (x2-x1)*sx, lh = (y2-y1)*sy;
     ctx.strokeStyle = c.plate ? '#81c784' : '#4fc3f7';
     ctx.lineWidth = 2;
-    ctx.strokeRect(x1*sx, y1*sy, (x2-x1)*sx, (y2-y1)*sy);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    const ty = y1*sy - 24;
-    ctx.fillText(c.plate || `Car #${c.id}`, x1*sx + 4, ty < 0 ? y2*sy + 16 : ty);
+    ctx.strokeRect(lx, ly, lw, lh);
+
+    const label = c.plate || `Car #${c.id}`;
+    const tm = ctx.measureText(label);
+    const tx = lx + 4;
+    let ty = ly - 6;
+    if (ty < 0) { ty = ly + 16; }
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(tx - 2, ty - tm.actualBoundingBoxAscent - 2, tm.width + 4, tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent + 4);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, tx, ty);
   }
   requestAnimationFrame(drawOverlay);
 }

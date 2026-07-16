@@ -54,6 +54,7 @@ class Pipeline:
 
         self.cars: dict[int, CarState] = {}
         self._latest_frame: Optional[np.ndarray] = None
+        self._latest_ts: float = 0.0
         self._latest_tracks: list = []
 
     def _ocr(self, crop: np.ndarray) -> str:
@@ -69,8 +70,9 @@ class Pipeline:
             prev = p
         return "".join(chars)
 
-    def process_frame(self, frame: np.ndarray):
+    def process_frame(self, frame: np.ndarray, timestamp: float = 0.0):
         self._latest_frame = frame
+        self._latest_ts = timestamp
         h, w = frame.shape[:2]
         now = time.time()
 

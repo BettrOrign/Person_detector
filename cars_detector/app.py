@@ -140,6 +140,7 @@ async def ws(websocket: WebSocket):
                 for t in tracks
             ]
             await websocket.send_text(json.dumps({
+                "ts": pipeline._latest_ts,
                 "cars": data,
                 "gallery_count": pipeline.gallery.count(),
             }))
@@ -163,21 +164,27 @@ def detection_loop(p: Pipeline):
         logger.error(f"Cannot open source: {p.source}")
         return
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    delay = 1.0 / fps
-    logger.info(f"Playing: {p.source} ({fps:.1f} fps)")
+    skip = max(1, int(fps / 8))
+    logger.info(f"Playing: {p.source} ({fps:.1f} fps), processing every {skip}th frame")
 
+    frame_idx = 0
     while p.running:
         t0 = time.time()
         ret, frame = cap.read()
         if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            frame_idx = 0
             continue
-        p.process_frame(frame)
+        frame_idx += 1
+        if frame_idx % skip != 0:
+            continue
+
+        ts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        p.process_frame(frame, timestamp=ts)
+
         dt = time.time() - t0
-        logger.info(f"Cars={len(p._latest_tracks)} gallery={p.gallery.count()} fps={1/max(dt, 0.01):.1f}")
-        remaining = delay - dt
-        if remaining > 0:
-            time.sleep(remaining)
+        if frame_idx % (skip * 50) == 0:
+            logger.info(f"Cars={len(p._latest_tracks)} gallery={p.gallery.count()} fps={1/max(dt, 0.01):.1f}")
     cap.release()
     logger.info("Detection loop stopped")
 
