@@ -3,13 +3,15 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
+import threading
 import time
 
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
@@ -22,6 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
 pipeline: Pipeline | None = None
+_thread: threading.Thread | None = None
 app = FastAPI()
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -62,6 +65,60 @@ def gallery_delete(pid: int):
     if not ok:
         return JSONResponse({"error": "not found"}, status_code=404)
     return {"ok": True}
+
+
+RANGE_RE = re.compile(r"bytes=(\d+)-(\d*)")
+VIDEO_MIME = {
+    ".mp4": "video/mp4",
+    ".avi": "video/x-msvideo",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".webm": "video/webm",
+    ".ts": "video/mp2t",
+    ".flv": "video/x-flv",
+}
+
+
+@app.get("/video")
+async def video_stream(request: Request):
+    if pipeline is None:
+        return JSONResponse({"error": "pipeline not ready"}, status_code=503)
+    path = pipeline.source
+    if not path or not os.path.isfile(path):
+        return JSONResponse({"error": "no video"}, status_code=404)
+
+    total = os.path.getsize(path)
+    mime = VIDEO_MIME.get(os.path.splitext(path)[1].lower(), "video/mp4")
+    range_header = request.headers.get("range", "")
+    m = RANGE_RE.match(range_header)
+    if m:
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else total - 1
+        length = end - start + 1
+        with open(path, "rb") as f:
+            f.seek(start)
+            body = f.read(length)
+        return Response(
+            body,
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Content-Type": mime,
+                "Content-Length": str(length),
+            },
+        )
+
+    with open(path, "rb") as f:
+        body = f.read()
+    return Response(
+        body,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Type": mime,
+            "Content-Length": str(total),
+        },
+    )
 
 
 @app.websocket("/ws")
@@ -167,27 +224,20 @@ def _process_image(p: Pipeline, path: str):
         pass
 
 
-@app.on_event("startup")
-def startup():
-    global pipeline
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", default="0")
-    parser.add_argument("--gallery", default="gallery")
-    parser.add_argument("--port", type=int, default=8080)
-    args, _ = parser.parse_known_args()
-
-    pipeline = Pipeline(source=args.source, gallery_path=args.gallery)
-
-    import threading
-    t = threading.Thread(target=detection_loop, args=(pipeline,), daemon=True)
-    t.start()
+def _start_pipeline(source: str, gallery_path: str):
+    global pipeline, _thread
+    pipeline = Pipeline(source=source, gallery_path=gallery_path)
+    _thread = threading.Thread(target=detection_loop, args=(pipeline,), daemon=True)
+    _thread.start()
 
 
-@app.on_event("shutdown")
-def shutdown():
+def _stop_pipeline():
+    global pipeline, _thread
     if pipeline:
         pipeline.running = False
         pipeline.gallery.close()
+        pipeline = None
+    _thread = None
 
 
 def main():
@@ -204,16 +254,17 @@ def main():
         p.gallery.close()
         return
 
-    os.environ.setdefault("CARSDETECTOR_SOURCE", args.source)
-    os.environ.setdefault("CARSDETECTOR_GALLERY", args.gallery)
-    os.environ.setdefault("CARSDETECTOR_PORT", str(args.port))
+    _start_pipeline(args.source, args.gallery)
 
-    uvicorn.run(
-        "app:app",
-        host=args.host,
-        port=args.port,
-        log_level="info",
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
+    finally:
+        _stop_pipeline()
 
 
 if __name__ == "__main__":

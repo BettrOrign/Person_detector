@@ -102,11 +102,7 @@ function drawOverlay() {
   requestAnimationFrame(drawOverlay);
 }
 
-if (navigator.mediaDevices?.getUserMedia) {
-  navigator.mediaDevices.getUserMedia({ video: true })
-    .then(stream => { video.srcObject = stream; video.play(); })
-    .catch(() => { video.src = '/video'; });
-}
+video.src = '/video';
 
 loadGallery();
 setInterval(loadGallery, 3000);

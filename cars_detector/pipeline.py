@@ -5,7 +5,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import pytesseract
+import onnxruntime as ort
 from ultralytics import YOLO
 
 from gallery import PlateGallery
@@ -15,11 +15,14 @@ logger = logging.getLogger(__name__)
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 PLATE_MODEL_PATH = os.path.join(MODEL_DIR, "plate_detector.pt")
+PLATE_OCR_PATH = os.path.join(MODEL_DIR, "plate_ocr.onnx")
 CAR_CLASSES = {2, 5, 7}
 YOLO_IMGSZ = 640
 YOLO_CONF = 0.25
 PLATE_CONF = 0.25
-OCR_MAX_SIZE = 320
+
+LABELS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+BLANK_IDX = len(LABELS)
 
 
 class CarState:
@@ -43,6 +46,9 @@ class Pipeline:
         logger.info("Loading plate detection model...")
         self.plate_model = YOLO(PLATE_MODEL_PATH)
 
+        logger.info("Loading plate OCR model...")
+        self.ocr_session = ort.InferenceSession(PLATE_OCR_PATH, providers=["CPUExecutionProvider"])
+
         self.gallery = PlateGallery(gallery_path)
         self.tracker = Tracker()
 
@@ -51,17 +57,17 @@ class Pipeline:
         self._latest_tracks: list = []
 
     def _ocr(self, crop: np.ndarray) -> str:
-        h, w = crop.shape[:2]
-        if max(h, w) > OCR_MAX_SIZE:
-            scale = OCR_MAX_SIZE / max(h, w)
-            crop = cv2.resize(crop, None, fx=scale, fy=scale)
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        text = pytesseract.image_to_string(
-            thresh,
-            config="--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-        )
-        return text.strip().upper()
+        resized = cv2.cvtColor(cv2.resize(crop, (128, 64)), cv2.COLOR_BGR2RGB)
+        inp = resized[np.newaxis, ...].astype(np.uint8)
+        logits = self.ocr_session.run(["plate"], {"input": inp})[0][0]
+        preds = logits.argmax(axis=1)
+        chars = []
+        prev = -1
+        for p in preds:
+            if p != prev and p != BLANK_IDX:
+                chars.append(LABELS[p])
+            prev = p
+        return "".join(chars)
 
     def process_frame(self, frame: np.ndarray):
         self._latest_frame = frame
@@ -118,7 +124,6 @@ class Pipeline:
                     continue
                 try:
                     text = self._ocr(plate_crop)
-                    logger.debug(f"Car {cid} OCR raw: '{text}'")
                     if len(text) >= 3:
                         if text != car.plate_text:
                             car.plate_text = text
