@@ -55,6 +55,7 @@ class Pipeline:
         self.cars: dict[int, CarState] = {}
         self._latest_frame: Optional[np.ndarray] = None
         self._latest_ts: float = 0.0
+        self._latest_jpeg: bytes = b""
         self._latest_tracks: list = []
 
     def _ocr(self, crop: np.ndarray) -> str:
@@ -124,32 +125,36 @@ class Pipeline:
                 plate_crop = frame[gy1:gy2, gx1:gx2]
                 if plate_crop.size == 0:
                     continue
-                try:
-                    text = self._ocr(plate_crop)
-                    if len(text) >= 3:
-                        if text != car.plate_text:
-                            car.plate_text = text
-                            car.plate_conf = float(pbox.conf[0])
-                            car.gallery_id = self.gallery.get_or_create(
-                                text,
-                                cv2.imencode(".jpg", plate_crop,
-                                              [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes(),
-                            )
-                            logger.info(f"Car {cid} plate: {text}")
-                        break
-                except Exception as e:
-                    logger.warning(f"OCR error for car {cid}: {e}")
+                text = self._ocr(plate_crop)
+                if len(text) >= 3:
+                    car.plate_text = text
+                    car.plate_conf = float(pbox.conf[0])
+                    self.gallery.get_or_create(text, frame, gy1, gy2, gx1, gx2)
 
-        dead = [cid for cid, c in self.cars.items()
-                if cid not in fresh_ids and now - c.last_seen > 3.0]
-        for cid in dead:
+        ids_to_remove = {cid for cid in self.cars if cid not in fresh_ids}
+        for cid in ids_to_remove:
             del self.cars[cid]
 
-        for cid in fresh_ids:
-            self.cars[cid].last_seen = now
-
-        tracks = [self.cars[cid] for cid in sorted(fresh_ids)]
+        tracks = []
+        for cid, car in self.cars.items():
+            tracks.append(car)
         self._latest_tracks = tracks
+
+        self._draw_boxes(frame, tracks)
+
+    def _draw_boxes(self, frame: np.ndarray, tracks: list):
+        for t in tracks:
+            x1, y1, x2, y2 = t.bbox
+            color = (0, 255, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = t.plate_text if t.plate_text else f"Car #{t.track_id}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            bg_y1 = max(0, y1 - th - 8)
+            cv2.rectangle(frame, (x1, bg_y1), (x1 + tw + 8, y1), color, -1)
+            cv2.putText(frame, label, (x1 + 4, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        ret, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        self._latest_jpeg = buf.tobytes() if ret else b""
         return tracks
 
     def _bbox_iou(self, a, b):

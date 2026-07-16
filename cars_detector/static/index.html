@@ -6,9 +6,8 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;height:100vh}
-#video-wrap{flex:1;position:relative;overflow:hidden}
-#video-wrap video{width:100%;height:100%;object-fit:contain;background:#000}
-#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#canvas-wrap{flex:1;position:relative;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
+#canvas-wrap canvas{max-width:100%;max-height:100%}
 #sidebar{width:340px;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:column}
 #sidebar h2{padding:12px;font-size:14px;color:#888;border-bottom:1px solid #333}
 .car-card{padding:10px 12px;border-bottom:1px solid #2a2a2a}
@@ -25,9 +24,8 @@ body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;he
 </style>
 </head>
 <body>
-<div id="video-wrap">
-  <video id="video" autoplay muted></video>
-  <canvas id="overlay"></canvas>
+<div id="canvas-wrap">
+  <canvas id="canvas"></canvas>
 </div>
 <div id="sidebar">
   <h2>Cars</h2>
@@ -37,21 +35,20 @@ body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;he
   <div class="stats" id="stats"></div>
 </div>
 <script>
-const video = document.getElementById('video');
-const canvas = document.getElementById('overlay');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const carsList = document.getElementById('cars-list');
 const gallerySection = document.getElementById('gallery-section');
 const statsDiv = document.getElementById('stats');
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
-let detections = [];
-const MAX_DETECTIONS = 60;
+let frameImg = new Image();
 
 ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
-  detections.push({ ts: msg.ts || 0, cars: msg.cars || [] });
-  if (detections.length > MAX_DETECTIONS) detections.shift();
+  if (msg.frame) {
+    frameImg.src = 'data:image/jpeg;base64,' + msg.frame;
+  }
   statsDiv.textContent = `Cars: ${(msg.cars || []).length} | Gallery: ${msg.gallery_count || 0}`;
   renderCars(msg.cars || []);
 };
@@ -84,49 +81,20 @@ async function deletePlate(id) {
   loadGallery();
 }
 
-function drawOverlay() {
-  if (video.readyState < 2) { requestAnimationFrame(drawOverlay); return; }
-  canvas.width = video.clientWidth;
-  canvas.height = video.clientHeight;
-  const sx = canvas.width / video.videoWidth;
-  const sy = canvas.height / video.videoHeight;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.font = '14px system-ui, sans-serif';
-
-  const vt = video.currentTime;
-  let best = null, bestDiff = 999;
-  for (const d of detections) {
-    const diff = Math.abs(d.ts - vt);
-    if (diff < bestDiff) { bestDiff = diff; best = d; }
+function renderFrame() {
+  if (frameImg.complete && frameImg.naturalWidth > 0) {
+    if (canvas.width !== frameImg.naturalWidth || canvas.height !== frameImg.naturalHeight) {
+      canvas.width = frameImg.naturalWidth;
+      canvas.height = frameImg.naturalHeight;
+    }
+    ctx.drawImage(frameImg, 0, 0);
   }
-  const cars = (best && bestDiff < 1.0) ? best.cars : [];
-
-  for (const c of cars) {
-    const [x1,y1,x2,y2] = c.bbox;
-    const lx = x1*sx, ly = y1*sy, lw = (x2-x1)*sx, lh = (y2-y1)*sy;
-    ctx.strokeStyle = c.plate ? '#81c784' : '#4fc3f7';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(lx, ly, lw, lh);
-
-    const label = c.plate || `Car #${c.id}`;
-    const tm = ctx.measureText(label);
-    const tx = lx + 4;
-    let ty = ly - 6;
-    if (ty < 0) { ty = ly + 16; }
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(tx - 2, ty - tm.actualBoundingBoxAscent - 2, tm.width + 4, tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent + 4);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, tx, ty);
-  }
-  requestAnimationFrame(drawOverlay);
+  requestAnimationFrame(renderFrame);
 }
 
-video.src = '/video';
-
 loadGallery();
-setInterval(loadGallery, 3000);
-requestAnimationFrame(drawOverlay);
+setInterval(loadGallery, 10000);
+requestAnimationFrame(renderFrame);
 </script>
 </body>
 </html>

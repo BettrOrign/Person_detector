@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -139,12 +140,16 @@ async def ws(websocket: WebSocket):
                 }
                 for t in tracks
             ]
-            await websocket.send_text(json.dumps({
+            payload = {
                 "ts": pipeline._latest_ts,
                 "cars": data,
                 "gallery_count": pipeline.gallery.count(),
-            }))
-            await asyncio.sleep(0.1)
+            }
+            jpeg = pipeline._latest_jpeg
+            if jpeg:
+                payload["frame"] = base64.b64encode(jpeg).decode()
+            await websocket.send_text(json.dumps(payload))
+            await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         pass
 
@@ -164,8 +169,7 @@ def detection_loop(p: Pipeline):
         logger.error(f"Cannot open source: {p.source}")
         return
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    skip = max(1, int(fps / 8))
-    logger.info(f"Playing: {p.source} ({fps:.1f} fps), processing every {skip}th frame")
+    logger.info(f"Playing: {p.source} ({fps:.1f} fps), every frame processed")
 
     frame_idx = 0
     while p.running:
@@ -176,14 +180,12 @@ def detection_loop(p: Pipeline):
             frame_idx = 0
             continue
         frame_idx += 1
-        if frame_idx % skip != 0:
-            continue
 
         ts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         p.process_frame(frame, timestamp=ts)
 
         dt = time.time() - t0
-        if frame_idx % (skip * 50) == 0:
+        if frame_idx % 50 == 0:
             logger.info(f"Cars={len(p._latest_tracks)} gallery={p.gallery.count()} fps={1/max(dt, 0.01):.1f}")
     cap.release()
     logger.info("Detection loop stopped")
