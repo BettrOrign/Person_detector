@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cars Detector</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;height:100vh}
+#video-wrap{flex:1;position:relative;overflow:hidden}
+#video-wrap video{width:100%;height:100%;object-fit:contain;background:#000}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#sidebar{width:340px;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:column}
+#sidebar h2{padding:12px;font-size:14px;color:#888;border-bottom:1px solid #333}
+.car-card{padding:10px 12px;border-bottom:1px solid #2a2a2a}
+.car-card .id{font-weight:700;color:#4fc3f7;font-size:13px}
+.car-card .plate{color:#81c784;font-size:15px;margin-top:2px;font-family:monospace}
+.car-card .plate.empty{color:#666;font-style:italic}
+.car-card .conf{color:#999;font-size:11px;margin-top:2px}
+#gallery-section{flex:1;overflow-y:auto}
+#gallery-section .entry{padding:8px 12px;display:flex;justify-content:space-between;border-bottom:1px solid #2a2a2a;font-size:13px}
+#gallery-section .entry .plate-text{font-family:monospace;color:#81c784}
+#gallery-section .entry .del{cursor:pointer;color:#e57373;font-weight:700}
+#gallery-section .entry .del:hover{color:#ff0000}
+.stats{padding:8px 12px;font-size:12px;color:#666;border-top:1px solid #333}
+</style>
+</head>
+<body>
+<div id="video-wrap">
+  <video id="video" autoplay muted></video>
+  <canvas id="overlay"></canvas>
+</div>
+<div id="sidebar">
+  <h2>Cars</h2>
+  <div id="cars-list"></div>
+  <h2>Gallery</h2>
+  <div id="gallery-section"></div>
+  <div class="stats" id="stats"></div>
+</div>
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const carsList = document.getElementById('cars-list');
+const gallerySection = document.getElementById('gallery-section');
+const statsDiv = document.getElementById('stats');
+
+const ws = new WebSocket(`ws://${location.host}/ws`);
+let cars = [];
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  cars = msg.cars || [];
+  statsDiv.textContent = `Cars: ${cars.length} | Gallery: ${msg.gallery_count || 0}`;
+  renderCars();
+};
+
+function renderCars() {
+  carsList.innerHTML = cars.map(c => {
+    const plateClass = c.plate ? '' : 'empty';
+    const plateText = c.plate || 'detecting...';
+    const conf = c.plate_conf ? ` (${(c.plate_conf*100).toFixed(0)}%)` : '';
+    return `<div class="car-card">
+      <div class="id">Car #${c.id}</div>
+      <div class="plate ${plateClass}">${plateText}${conf}</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadGallery() {
+  const r = await fetch('/gallery');
+  const data = await r.json();
+  gallerySection.innerHTML = data.map(e => `
+    <div class="entry">
+      <span class="plate-text">${e.plate}</span>
+      <span class="del" onclick="deletePlate(${e.id})">✕</span>
+    </div>`).join('');
+}
+
+async function deletePlate(id) {
+  if (!confirm('Delete this plate from gallery?')) return;
+  await fetch(`/gallery/${id}`, { method: 'DELETE' });
+  loadGallery();
+}
+
+function drawOverlay() {
+  if (video.readyState < 2) { requestAnimationFrame(drawOverlay); return; }
+  canvas.width = video.clientWidth;
+  canvas.height = video.clientHeight;
+  const sx = canvas.width / video.videoWidth;
+  const sy = canvas.height / video.videoHeight;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const c of cars) {
+    const [x1,y1,x2,y2] = c.bbox;
+    ctx.strokeStyle = c.plate ? '#81c784' : '#4fc3f7';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x1*sx, y1*sy, (x2-x1)*sx, (y2-y1)*sy);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    const ty = y1*sy - 24;
+    ctx.fillText(c.plate || `Car #${c.id}`, x1*sx + 4, ty < 0 ? y2*sy + 16 : ty);
+  }
+  requestAnimationFrame(drawOverlay);
+}
+
+if (navigator.mediaDevices?.getUserMedia) {
+  navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => { video.srcObject = stream; video.play(); })
+    .catch(() => { video.src = '/video'; });
+}
+
+loadGallery();
+setInterval(loadGallery, 3000);
+requestAnimationFrame(drawOverlay);
+</script>
+</body>
+</html>
