@@ -13,13 +13,16 @@ from tracker import Tracker
 
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+HERE = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(HERE, "models")
 PLATE_MODEL_PATH = os.path.join(MODEL_DIR, "plate_detector.pt")
 PLATE_OCR_PATH = os.path.join(MODEL_DIR, "plate_ocr.onnx")
 CAR_CLASSES = {2, 5, 7}
 YOLO_IMGSZ = 640
 YOLO_CONF = 0.25
 PLATE_CONF = 0.25
+
+YOLO_PATH = os.environ.get("YOLO_MODEL") or os.path.join(HERE, "..", "v1", "yolo11n.pt")
 
 LABELS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BLANK_IDX = len(LABELS)
@@ -41,7 +44,7 @@ class Pipeline:
         self.running = True
 
         logger.info("Loading YOLO for car detection...")
-        self.yolo = YOLO("/home/sirius/Projects/person_detector/v1/yolo11n.pt")
+        self.yolo = YOLO(YOLO_PATH)
 
         logger.info("Loading plate detection model...")
         self.plate_model = YOLO(PLATE_MODEL_PATH)

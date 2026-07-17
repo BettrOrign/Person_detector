@@ -8,3 +8,7 @@ uvicorn>=0.34.0
 ultralytics>=8.3.0
 python-dotenv>=1.0.0
 google-genai>=1.0.0
+
+# System deps (Windows): typically none needed beyond Visual C++ redistributable
+# System deps (Linux): sudo apt install libgl1 libglib2.0-0
+# Models: см. README или skachat9 v1/yolo11n.pt i yakhyo_face_reid/weights/

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import sys
 import time
 from typing import Optional
 
@@ -24,7 +25,22 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise SystemExit("GEMINI_API_KEY not found in .env")
 
-YOLO_PATH = "../v1/yolo11n.pt"
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_model(paths: list[str]) -> str:
+    for p in paths:
+        expanded = os.path.expanduser(p)
+        if os.path.isfile(expanded):
+            return expanded
+    logger.warning(f"Model not found, tried: {paths}")
+    return paths[0]
+
+
+YOLO_PATH = os.environ.get("YOLO_MODEL") or _find_model([
+    os.path.join(HERE, "models", "yolo11n.pt"),
+    os.path.join(HERE, "..", "v1", "yolo11n.pt"),
+])
 YOLO_IMGSZ = 320
 YOLO_CONF = 0.4
 YOLO_PAD = 0.1
@@ -47,10 +63,19 @@ class PersonState:
 
 class Pipeline:
     def __init__(self, source: str, gallery_path: str = "gallery",
-                 det_weight: str = "../yakhyo_face_reid/weights/det_500m.onnx",
-                 rec_weight: str = "../yakhyo_face_reid/weights/w600k_mbf.onnx"):
+                 det_weight: str | None = None,
+                 rec_weight: str | None = None):
         self.source = source
         self.running = True
+
+        det_weight = det_weight or os.environ.get("DET_MODEL") or _find_model([
+            os.path.join(HERE, "models", "det_500m.onnx"),
+            os.path.join(HERE, "..", "yakhyo_face_reid", "weights", "det_500m.onnx"),
+        ])
+        rec_weight = rec_weight or os.environ.get("REC_MODEL") or _find_model([
+            os.path.join(HERE, "models", "w600k_mbf.onnx"),
+            os.path.join(HERE, "..", "yakhyo_face_reid", "weights", "w600k_mbf.onnx"),
+        ])
 
         logger.info("Loading YOLO...")
         self.yolo = YOLO(YOLO_PATH)
