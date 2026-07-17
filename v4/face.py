@@ -6,6 +6,8 @@ import numpy as np
 import onnxruntime
 from skimage.transform import SimilarityTransform
 
+from gpu_utils import onnx_providers
+
 logger = logging.getLogger(__name__)
 
 REFERENCE_ALIGNMENT = np.array(
@@ -67,7 +69,7 @@ class SCRFD:
         self.std = 128.0
         self.center_cache = {}
         self.session = onnxruntime.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"]
+            model_path, providers=onnx_providers()
         )
         self.output_names = [x.name for x in self.session.get_outputs()]
         self.input_names = [x.name for x in self.session.get_inputs()]
@@ -167,7 +169,7 @@ class ArcFace:
         self.model_path = model_path
         self.input_size = (112, 112)
         self.session = onnxruntime.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"]
+            model_path, providers=onnx_providers()
         )
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]

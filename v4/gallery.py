@@ -8,7 +8,21 @@ import time
 import faiss
 import numpy as np
 
+from gpu_utils import has_cuda
+
 logger = logging.getLogger(__name__)
+
+
+def _make_index(dim: int) -> faiss.Index:
+    index = faiss.IndexFlatIP(dim)
+    if has_cuda():
+        try:
+            res = faiss.StandardGpuResources()
+            index = faiss.index_cpu_to_gpu(res, 0, index)
+            logger.info("FAISS index on GPU")
+        except Exception as e:
+            logger.warning(f"FAISS GPU failed, falling back to CPU: {e}")
+    return index
 
 
 class Gallery:
@@ -24,7 +38,7 @@ class Gallery:
         self._init_db()
         self._lock = threading.Lock()
 
-        self._index = faiss.IndexFlatIP(dim)
+        self._index = _make_index(dim)
         self._names: dict[int, str] = {}
         self._next_id = 1
         self._load()
@@ -108,7 +122,7 @@ class Gallery:
         return True
 
     def _rebuild_index(self):
-        self._index = faiss.IndexFlatIP(self.dim)
+        self._index = _make_index(self.dim)
         rows = self._conn.execute(
             "SELECT person_id, vector FROM embeddings ORDER BY person_id"
         ).fetchall()

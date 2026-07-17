@@ -15,6 +15,7 @@ from ultralytics import YOLO
 
 from face import SCRFD, ArcFace
 from gallery import Gallery
+from gpu_utils import has_cuda, torch_device
 from tracker import Tracker
 
 load_dotenv()
@@ -78,7 +79,7 @@ class Pipeline:
         ])
 
         logger.info("Loading YOLO...")
-        self.yolo = YOLO(YOLO_PATH)
+        self.yolo = YOLO(YOLO_PATH, device=torch_device())
 
         logger.info("Loading face models...")
         self.detector = SCRFD(det_weight)

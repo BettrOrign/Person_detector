@@ -1,3 +1,4 @@
+# === CPU requirements (works everywhere) ===
 opencv-python>=4.10.0
 numpy>=1.26.0
 onnxruntime>=1.20.0
@@ -9,6 +10,6 @@ ultralytics>=8.3.0
 python-dotenv>=1.0.0
 google-genai>=1.0.0
 
-# System deps (Windows): typically none needed beyond Visual C++ redistributable
-# System deps (Linux): sudo apt install libgl1 libglib2.0-0
-# Models: см. README или skachat9 v1/yolo11n.pt i yakhyo_face_reid/weights/
+# === GPU (optional — install if you have NVIDIA GPU) ===
+# pip install onnxruntime-gpu faiss-gpu
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118

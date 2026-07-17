@@ -28,6 +28,24 @@ LABELS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BLANK_IDX = len(LABELS)
 
 
+def _has_cuda() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
+
+def _torch_device() -> str:
+    return "cuda:0" if _has_cuda() else "cpu"
+
+
+def _onnx_providers() -> list[str]:
+    if _has_cuda():
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
 class CarState:
     def __init__(self, track_id: int, bbox: tuple):
         self.track_id = track_id
@@ -43,14 +61,14 @@ class Pipeline:
         self.source = source
         self.running = True
 
-        logger.info("Loading YOLO for car detection...")
-        self.yolo = YOLO(YOLO_PATH)
+        logger.info(f"Loading YOLO for car detection ({_torch_device()})...")
+        self.yolo = YOLO(YOLO_PATH, device=_torch_device())
 
-        logger.info("Loading plate detection model...")
-        self.plate_model = YOLO(PLATE_MODEL_PATH)
+        logger.info(f"Loading plate detection model ({_torch_device()})...")
+        self.plate_model = YOLO(PLATE_MODEL_PATH, device=_torch_device())
 
         logger.info("Loading plate OCR model...")
-        self.ocr_session = ort.InferenceSession(PLATE_OCR_PATH, providers=["CPUExecutionProvider"])
+        self.ocr_session = ort.InferenceSession(PLATE_OCR_PATH, providers=_onnx_providers())
 
         self.gallery = PlateGallery(gallery_path)
         self.tracker = Tracker()

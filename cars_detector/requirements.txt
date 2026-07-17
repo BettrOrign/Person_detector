@@ -1,6 +1,11 @@
+# === CPU requirements (works everywhere) ===
 opencv-python>=4.10.0
 numpy>=1.26.0
 onnxruntime>=1.20.0
 ultralytics>=8.3.0
 fastapi>=0.115.0
 uvicorn>=0.34.0
+
+# === GPU (optional — install if you have NVIDIA GPU) ===
+# pip install onnxruntime-gpu
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
